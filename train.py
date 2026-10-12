@@ -10,7 +10,7 @@ from env import DynamicRoutingEnv
 from model import QNetwork
 
 # Hyperparameters
-NUM_EPISODES = 300
+NUM_EPISODES = 600
 BATCH_SIZE = 32
 GAMMA = 0.99
 EPS_START = 1.0
@@ -22,7 +22,7 @@ state_dim = env.observation_space.shape[0]
 action_dim = env.action_space.n
 
 q_net = QNetwork(state_dim, action_dim)
-optimizer = optim.Adam(q_net.parameters(), lr=0.001)
+optimizer = optim.Adam(q_net.parameters(), lr=0.0005)
 memory = deque(maxlen=2000)
 
 epsilon = EPS_START
