@@ -12,9 +12,9 @@ class RoutingInference:
         self.q_net.load_state_dict(torch.load(model_path))
         self.q_net.eval()
 
-    def get_next_hop(self, current_node, target_node, link_delay_matrix, valid_neighbors=None):
+    def get_next_hop(self, current_node, target_node, link_delay_matrix, valid_neighbors=None, visited_nodes=None):
         """
-        Accepts state telemetry and returns recommended next hop node.
+        Accepts state telemetry and returns recommended next hop node safely.
         """
         matrix_flat = np.array(link_delay_matrix, dtype=np.float32).flatten()
         state = np.concatenate(([current_node, target_node], matrix_flat)).astype(np.float32)
@@ -23,10 +23,19 @@ class RoutingInference:
         with torch.no_grad():
             q_values = self.q_net(state_tensor).squeeze(0).numpy()
             
-            # Mask invalid actions if neighbor list is provided by SDN Controller
             if valid_neighbors is not None:
                 mask = np.zeros(self.num_nodes)
-                mask[valid_neighbors] = 1.0
+                for n in valid_neighbors:
+                    # If visited list is provided, block already-visited nodes to prevent loops!
+                    if visited_nodes is not None and n in visited_nodes:
+                        continue
+                    mask[n] = 1.0
+                
+                # Fallback if everything is blocked
+                if np.sum(mask) == 0:
+                    for n in valid_neighbors:
+                        mask[n] = 1.0
+                        
                 q_values[mask == 0.0] = -1e9
                 
             next_hop = int(np.argmax(q_values))
@@ -36,12 +45,5 @@ class RoutingInference:
 if __name__ == "__main__":
     engine = RoutingInference()
     mock_delays = np.random.uniform(5.0, 50.0, size=(6, 6))
-    
-    # Example prediction assuming Node 0 is connected to Node 1 and Node 2
-    next_node = engine.get_next_hop(
-        current_node=0, 
-        target_node=5, 
-        link_delay_matrix=mock_delays, 
-        valid_neighbors=[1, 2]
-    )
+    next_node = engine.get_next_hop(current_node=0, target_node=5, link_delay_matrix=mock_delays, valid_neighbors=[1, 2])
     print(f"Predicted next hop from Node 0 to Node 5 is: Node {next_node}")
