@@ -27,7 +27,7 @@ class DynamicRoutingEnv(gym.Env):
         self.link_delays = np.random.uniform(5.0, 50.0, size=(self.num_nodes, self.num_nodes))
         
         self.current_node = self.src
-        # Keep track of rooms we already visited so we don't loop!
+        # Keep track of rooms/nodes we already visited so we don't loop!
         self.visited_nodes = {self.current_node}
         
         return self._get_obs(), {}
@@ -40,13 +40,13 @@ class DynamicRoutingEnv(gym.Env):
         """Returns a binary mask of valid unvisited neighbors for current_node."""
         valid_mask = np.zeros(self.num_nodes, dtype=np.float32)
         
-        # Only allow neighbors we haven't visited yet
+        # Only allow neighbors we haven't visited yet to prevent loops
         for neighbor in self.G.neighbors(self.current_node):
             if neighbor not in self.visited_nodes:
                 valid_mask[neighbor] = 1.0
                 
         # SAFETY RULE: If all connected rooms are already visited (dead end), 
-        # allow going back so we don't break the code.
+        # allow going back so training doesn't break out or crash.
         if np.sum(valid_mask) == 0:
             for neighbor in self.G.neighbors(self.current_node):
                 valid_mask[neighbor] = 1.0
@@ -64,7 +64,7 @@ class DynamicRoutingEnv(gym.Env):
         delay = self.link_delays[self.current_node][next_node]
         self.current_node = next_node
         
-        # Mark this new room as visited!
+        # Mark this new node as visited!
         self.visited_nodes.add(self.current_node)
         
         reward = -delay
