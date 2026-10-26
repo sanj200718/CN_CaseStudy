@@ -189,7 +189,7 @@ The last two commands operate on the simulator, not Mininet. The Mininet packet-
 ## Latest simulator summary and team handover
 
 - `evaluation/results_latest_console_run/` preserves the latest five-scenario aggregate summary provided from the Mac terminal output, with a comparison table and provenance notes. The corresponding per-run raw CSV was not supplied with that terminal output; do not treat the older `evaluation/results/raw_results.csv` as if it generated the latest aggregate values.
-- `HANDOFF_TO_KARTHIK.md` contains the WSL/Mininet/Ryu validation checklist and acceptance criteria for handing the real-network evaluation to Iraban.
+- `NETWORK_RUNBOOK.md` contains the tested WSL commands and the first packet-level results.
 
 ## Team work split
 
