@@ -20,14 +20,18 @@ class DynamicRoutingEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        self.G = nx.erdos_renyi_graph(n=self.num_nodes, p=0.6, seed=42)
+        self.G = nx.erdos_renyi_graph(n=self.num_nodes, p=0.6, seed=seed)
         while not nx.is_connected(self.G):
             self.G = nx.erdos_renyi_graph(n=self.num_nodes, p=0.6)
+            
+        # Randomly choose distinct source and destination nodes so the agent learns bidirectional & multi-path routing
+        nodes = list(self.G.nodes())
+        self.src = np.random.choice(nodes)
+        self.dst = np.random.choice([n for n in nodes if n != self.src])
             
         self.link_delays = np.random.uniform(5.0, 50.0, size=(self.num_nodes, self.num_nodes))
         
         self.current_node = self.src
-        # Keep track of rooms/nodes we already visited so we don't loop!
         self.visited_nodes = {self.current_node}
         
         return self._get_obs(), {}
@@ -63,8 +67,6 @@ class DynamicRoutingEnv(gym.Env):
         
         delay = self.link_delays[self.current_node][next_node]
         self.current_node = next_node
-        
-        # Mark this new node as visited!
         self.visited_nodes.add(self.current_node)
         
         reward = -delay

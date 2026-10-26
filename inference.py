@@ -45,5 +45,5 @@ class RoutingInference:
 if __name__ == "__main__":
     engine = RoutingInference()
     mock_delays = np.random.uniform(5.0, 50.0, size=(6, 6))
-    next_node = engine.get_num_nodes = 6
-    print("Inference module ready.")
+    next_node = engine.get_next_hop(current_node=0, target_node=5, link_delay_matrix=mock_delays, valid_neighbors=[1, 2], visited_nodes={0})
+    print(f"Predicted next hop from Node 0 to Node 5 is: Node {next_node}")
