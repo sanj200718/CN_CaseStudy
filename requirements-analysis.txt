@@ -1,5 +1,0 @@
-numpy>=1.22
-pandas>=1.5
-matplotlib>=3.6
-networkx>=2.8,<4
-torch>=2.0

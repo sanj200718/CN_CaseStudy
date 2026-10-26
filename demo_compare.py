@@ -1,47 +1,60 @@
-"""Fair, deterministic-snapshot demo comparing the DQN to weighted Dijkstra."""
-from pathlib import Path
 import networkx as nx
 import numpy as np
+import torch
 from env import DynamicRoutingEnv
-from inference import RoutingInference
+from model import QNetwork
 
+# 1. Initialize Environment
+env = DynamicRoutingEnv(num_nodes=6, src=0, dst=5)
+state_dim = env.observation_space.shape[0]
+action_dim = env.action_space.n
 
-def main():
-    env = DynamicRoutingEnv(num_nodes=6, src=0, dst=5)
-    # Lock a single topology and delay matrix for both methods.
-    graph = env.G.copy()
-    delays = env.link_delays.copy()
-    for u, v in graph.edges:
-        graph[u][v]["weight"] = float(delays[u][v])
-        graph[u][v]["delay"] = float(delays[u][v])
+# 2. Load Trained ML Model
+q_net = QNetwork(state_dim, action_dim)
+q_net.load_state_dict(torch.load("routing_dqn.pt"))
+q_net.eval()
 
-    dijkstra_path = nx.shortest_path(graph, source=env.src, target=env.dst, weight="weight")
-    dijkstra_cost = sum(graph[u][v]["delay"] for u, v in zip(dijkstra_path, dijkstra_path[1:]))
+# 3. Lock in a fixed snapshot of the network topology and link delays for a fair test
+fixed_graph = env.G.copy()
+fixed_delays = env.link_delays.copy()
 
-    agent = RoutingInference(model_path=Path(__file__).with_name("routing_dqn.pt"), num_nodes=6)
-    path = [env.src]
-    visited = {env.src}
-    current = env.src
-    while current != env.dst and len(path) <= env.num_nodes:
-        neighbors = list(graph.neighbors(current))
-        nxt = agent.get_next_hop(current, env.dst, delays,
-                                 valid_neighbors=neighbors, visited_nodes=visited)
-        if nxt is None:
-            break
-        if nxt not in graph.neighbors(current) or nxt in visited:
-            break
-        path.append(nxt)
-        visited.add(nxt)
-        current = nxt
-    dqn_success = current == env.dst
-    dqn_cost = sum(float(delays[u][v]) for u, v in zip(path, path[1:])) if dqn_success else float("nan")
+# --- A. Evaluate Standard Dijkstra Routing ---
+# Compute shortest path using the fixed delay matrix as edge weights
+for u, v, data in fixed_graph.edges(data=True):
+    fixed_graph[u][v]['weight'] = fixed_delays[u][v]
 
-    print("=== Same-snapshot routing comparison ===")
-    print(f"Topology edges: {graph.number_of_edges()}")
-    print(f"Dijkstra: path={dijkstra_path}, simulated route cost={dijkstra_cost:.2f}")
-    print(f"DQN:      path={path}, success={dqn_success}, simulated route cost={dqn_cost:.2f}")
-    print("Note: these are simulated route costs, not packet-level network measurements.")
+dijkstra_path = nx.shortest_path(fixed_graph, source=0, target=5, weight='weight')
+dijkstra_delay = sum(fixed_delays[u][v] for u, v in zip(dijkstra_path[:-1], dijkstra_path[1:]))
 
+# --- B. Evaluate ML Agent Routing ---
+# Reset environment with the same delay state snapshot
+state, _ = env.reset()
+env.G = fixed_graph
+env.link_delays = fixed_delays.copy()
+env.current_node = 0
 
-if __name__ == "__main__":
-    main()
+dqn_path = [0]
+total_dqn_delay = 0.0
+done = False
+
+while not done and len(dqn_path) < 10:
+    curr = env.current_node
+    valid_mask = env.get_valid_actions()
+    
+    state_tensor = torch.FloatTensor(state).unsqueeze(0)
+    with torch.no_grad():
+        q_vals = q_net(state_tensor).squeeze(0).numpy()
+        q_vals[valid_mask == 0.0] = -1e9
+        action = int(np.argmax(q_vals))
+        
+    next_state, reward, done, _, _ = env.step(action)
+    
+    if action in fixed_graph.neighbors(curr):
+        total_dqn_delay += fixed_delays[curr][action]
+        dqn_path.append(action)
+        
+    state = next_state
+
+print("=== Fair Intelligent Routing Comparison Results ===")
+print(f"Standard Dijkstra Route: {dijkstra_path} | Cost/Delay: {dijkstra_delay:.2f} ms")
+print(f"ML Agent Route       : {dqn_path} | Cost/Delay: {total_dqn_delay:.2f} ms")
