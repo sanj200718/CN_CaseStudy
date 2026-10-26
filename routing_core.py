@@ -4,12 +4,13 @@ import math
 import networkx as nx
 import numpy as np
 
-VALID_MODES = {"ospf", "dijkstra", "dqn"}
+VALID_MODES = {"ospf", "dijkstra", "dqn", "dqn_double"}
 
 
 def normalize_mode(mode: str) -> str:
     value = str(mode).strip().lower()
-    aliases = {"hop_count": "ospf", "ospf_style": "ospf", "shortest_path": "dijkstra"}
+    aliases = {"hop_count": "ospf", "ospf_style": "ospf", "shortest_path": "dijkstra",
+               "double_dqn": "dqn_double", "visited_aware_double_dqn": "dqn_double"}
     value = aliases.get(value, value)
     if value not in VALID_MODES:
         raise ValueError(f"Unsupported routing mode {mode!r}; choose one of {sorted(VALID_MODES)}")

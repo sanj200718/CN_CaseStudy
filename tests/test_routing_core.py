@@ -3,7 +3,7 @@ import networkx as nx
 import numpy as np
 import graph_config as cfg
 from experiments.metric_parsers import parse_ping, parse_iperf_udp
-from routing_core import make_graph, build_delay_matrix, compute_route
+from routing_core import make_graph, build_delay_matrix, compute_route, normalize_mode
 
 
 class GreedyTestAgent:
@@ -45,6 +45,19 @@ class RoutingCoreTests(unittest.TestCase):
         result = compute_route(self.graph, 0, 5, mode="ospf")
         self.assertTrue(result["success"])
         self.assertEqual(len(result["path"]) - 1, 2)
+
+    def test_double_dqn_mode_alias_normalizes(self):
+        self.assertEqual(normalize_mode("dqn_double"), "dqn_double")
+        self.assertEqual(normalize_mode("double_dqn"), "dqn_double")
+        self.assertEqual(normalize_mode("visited_aware_double_dqn"), "dqn_double")
+
+    def test_double_dqn_mode_uses_next_hop_interface(self):
+        agent = GreedyTestAgent({0: 2, 2: 4, 4: 1, 1: 5})
+        result = compute_route(self.graph, 0, 5, mode="dqn_double", inference_engine=agent,
+                               delay_matrix=self.matrix, dqn_fallback=False)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["path"], [0, 2, 4, 1, 5])
+        self.assertEqual(result["route_mode"], "dqn_double")
 
     def test_dqn_passes_visited_nodes_and_reaches_destination(self):
         agent = GreedyTestAgent({0: 2, 2: 4, 4: 1, 1: 5})

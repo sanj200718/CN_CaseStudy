@@ -4,13 +4,14 @@
 Modes:
   ospf     OSPF-style hop-count shortest path (not a full OSPF protocol)
   dijkstra Live configured-delay-weighted shortest path
-  dqn      DQN next-hop routing with explicit Dijkstra fallback on dead ends
+  dqn      Original 38-feature DQN with explicit Dijkstra fallback
+  dqn_double  Visited-aware Double DQN (44 features) with explicit Dijkstra fallback
 
 REST API (default http://127.0.0.1:8080):
   GET  /routing/status
   GET  /routing/metrics
   GET  /routing/decisions?limit=50
-  POST /routing/mode          {"mode":"dijkstra|ospf|dqn"}
+  POST /routing/mode          {"mode":"dijkstra|ospf|dqn|dqn_double"}
   POST /routing/link-state    {"u":0,"v":3,"up":false}
   POST /routing/link-delay    {"u":0,"v":3,"delay_ms":35}
   POST /routing/reset         {"mode":"dijkstra"}  (mode optional)
@@ -42,11 +43,13 @@ from ryu.app.wsgi import ControllerBase, WSGIApplication, route, Response
 
 import graph_config as cfg
 from inference import RoutingInference
+from inference_visited_aware import VisitedAwareRoutingInference
 from routing_core import build_delay_matrix, make_graph, compute_route, normalize_mode
 
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_MODEL_PATH = ROOT / "routing_dqn.pt"
+DEFAULT_DOUBLE_DQN_MODEL_PATH = ROOT / "routing_dqn_visited_double_candidate.pt"
 DECISION_LOG_PATH = ROOT / "results" / "controller_decisions.csv"
 CSV_FIELDS = [
     "timestamp", "mode", "current_node", "target_node", "src_ip", "dst_ip",
@@ -158,6 +161,7 @@ class IntelligentRoutingController(app_manager.RyuApp):
                             for (u, v), delay in cfg.BASE_DELAYS_MS.items()}
         self.active_edges = set(self.edge_delays)
         self.inference = None
+        self.inference_double = None
         self._load_model()
         self.metrics = Counter()
         self.mode_counts = Counter()
@@ -165,18 +169,47 @@ class IntelligentRoutingController(app_manager.RyuApp):
         self.last_route = None
         self._log_lock = threading.Lock()
         self._prepare_log()
-        self.logger.info("IntelligentRoutingController initialized mode=%s model_loaded=%s", self.mode, self.inference is not None)
+        self.logger.info(
+            "IntelligentRoutingController initialized mode=%s dqn_loaded=%s double_dqn_loaded=%s",
+            self.mode, self.inference is not None, self.inference_double is not None,
+        )
 
     def _load_model(self):
+        # Load the original model and the 44-feature candidate independently.
+        # A missing/broken candidate must not prevent the original DQN from loading.
         try:
             if DEFAULT_MODEL_PATH.exists():
                 self.inference = RoutingInference(model_path=str(DEFAULT_MODEL_PATH), num_nodes=cfg.NUM_NODES)
-                self.logger.info("Loaded DQN model from %s", DEFAULT_MODEL_PATH)
+                self.logger.info("Loaded original DQN model from %s", DEFAULT_MODEL_PATH)
             else:
-                self.logger.warning("Model file %s not found; DQN mode will report unavailable", DEFAULT_MODEL_PATH)
+                self.logger.warning("Model file %s not found; dqn mode will be unavailable", DEFAULT_MODEL_PATH)
         except Exception:
             self.inference = None
-            self.logger.exception("Could not load DQN model; DQN mode will be unavailable")
+            self.logger.exception("Could not load original DQN model; dqn mode will be unavailable")
+
+        try:
+            if DEFAULT_DOUBLE_DQN_MODEL_PATH.exists():
+                self.inference_double = VisitedAwareRoutingInference(
+                    model_path=str(DEFAULT_DOUBLE_DQN_MODEL_PATH), num_nodes=cfg.NUM_NODES
+                )
+                self.logger.info("Loaded visited-aware Double DQN model from %s", DEFAULT_DOUBLE_DQN_MODEL_PATH)
+            else:
+                self.logger.warning(
+                    "Model file %s not found; dqn_double mode will be unavailable",
+                    DEFAULT_DOUBLE_DQN_MODEL_PATH,
+                )
+        except Exception:
+            self.inference_double = None
+            self.logger.exception("Could not load visited-aware Double DQN; dqn_double mode will be unavailable")
+
+    def _validate_mode_model(self, mode):
+        if mode == "dqn" and self.inference is None:
+            raise RuntimeError("dqn mode requested but routing_dqn.pt could not be loaded")
+        if mode == "dqn_double" and self.inference_double is None:
+            raise RuntimeError(
+                "dqn_double mode requested but routing_dqn_visited_double_candidate.pt "
+                "could not be loaded; place the 44-feature candidate checkpoint in the project root"
+            )
 
     def _prepare_log(self):
         DECISION_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -186,8 +219,7 @@ class IntelligentRoutingController(app_manager.RyuApp):
 
     def set_mode(self, mode):
         mode = normalize_mode(mode)
-        if mode == "dqn" and self.inference is None:
-            raise RuntimeError("DQN mode requested but the trained model could not be loaded")
+        self._validate_mode_model(mode)
         self.mode = mode
         self.flush_ipv4_flows()
         self.logger.info("Routing mode changed to %s; IPv4 flows flushed", mode)
@@ -198,7 +230,9 @@ class IntelligentRoutingController(app_manager.RyuApp):
         self.edge_delays = {cfg.normalized_edge(u, v): float(delay)
                             for (u, v), delay in cfg.BASE_DELAYS_MS.items()}
         if mode is not None:
-            self.mode = normalize_mode(mode)
+            mode = normalize_mode(mode)
+            self._validate_mode_model(mode)
+            self.mode = mode
         self.flush_ipv4_flows()
         return {"mode": self.mode, "active_edges": [list(e) for e in sorted(self.active_edges)],
                 "edge_delays_ms": {f"{u}-{v}": d for (u, v), d in self.edge_delays.items()}}
@@ -238,8 +272,14 @@ class IntelligentRoutingController(app_manager.RyuApp):
     def _choose_route(self, source, target):
         graph = self._graph()
         matrix = self._delay_matrix()
+        if self.mode == "dqn_double":
+            selected_inference = self.inference_double
+        elif self.mode == "dqn":
+            selected_inference = self.inference
+        else:
+            selected_inference = None
         return compute_route(graph, source, target, mode=self.mode,
-                             inference_engine=self.inference, delay_matrix=matrix,
+                             inference_engine=selected_inference, delay_matrix=matrix,
                              dqn_fallback=True, max_hops=cfg.NUM_NODES * 2)
 
     def _record_decision(self, record):
@@ -269,7 +309,16 @@ class IntelligentRoutingController(app_manager.RyuApp):
         return {
             "controller": "ready",
             "mode": self.mode,
+            # Keep model_loaded for compatibility with existing API consumers.
             "model_loaded": self.inference is not None,
+            "active_model_loaded": (
+                self.inference is not None if self.mode == "dqn" else
+                self.inference_double is not None if self.mode == "dqn_double" else True
+            ),
+            "models_loaded": {
+                "dqn": self.inference is not None,
+                "dqn_double": self.inference_double is not None,
+            },
             "connected_switches": sorted(cfg.dpid_to_node(dpid) for dpid in self.datapaths),
             "expected_switches": cfg.NUM_NODES,
             "active_edges": [list(e) for e in sorted(self.active_edges)],
