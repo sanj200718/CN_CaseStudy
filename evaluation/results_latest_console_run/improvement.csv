@@ -1,0 +1,6 @@
+scenario,dijkstra_mean_route_delay_ms,dqn_mean_route_delay_ms,dqn_delay_change_pct_vs_dijkstra,dqn_success_rate_pct,dijkstra_success_rate_pct,success_rate_difference_dqn_minus_dijkstra_pp
+normal,41.7298,52.4212,25.6205,100.0000,100.0000,0.0000
+congested_link,50.8289,62.2165,22.4038,100.0000,100.0000,0.0000
+high_delay_alternate_path,49.8065,59.1963,18.8526,100.0000,100.0000,0.0000
+reduced_bandwidth_proxy,39.0894,44.5903,14.0726,100.0000,100.0000,0.0000
+link_failure,41.7234,52.0865,24.8376,100.0000,100.0000,0.0000
